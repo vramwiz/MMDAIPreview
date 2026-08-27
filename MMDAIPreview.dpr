@@ -44,6 +44,7 @@ begin
     if ParamCount = 0 then
     begin
       Application.Initialize;
+      Application.Title := 'MMD AI Preview';
       Application.MainFormOnTaskbar := True;
       Application.CreateForm(TMmdAiPreviewMainForm, MainForm);
       Application.Run;

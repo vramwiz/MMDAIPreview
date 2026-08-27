@@ -31,25 +31,25 @@ type
 
   TMmdAiPreviewMainForm = class(TForm)
   private
-    FBoneList: TListBox;
     FCandidateLabel: TLabel;
     FCurrentCandidateId: string;
     FCurrentModelFile: string;
     FCurrentPoseData: string;
     FCurrentPoseName: string;
     FDisplayCombo: TComboBox;
+    FLoadingPoseList: Boolean;
     FModel: TPmxModel;
     FOpenModelButton: TButton;
-    FOpenPoseButton: TButton;
-    FSavePoseButton: TButton;
     FPipeServer: TMmdAiPreviewPipeServer;
     FPlaceholderModel: TPmxModel;
+    FPoseFiles: TArray<string>;
+    FPoseList: TListBox;
     FPoses: TPmxBonePoses;
     FStatusLabel: TLabel;
+    FRuntimeStarted: Boolean;
     FViewport: TMmdAiPreviewViewport;
     procedure ApplyDisplayMode;
     procedure ApplyPoseData(const PoseData: string);
-    procedure BoneListClick(Sender: TObject);
     procedure DisplayModeChanged(Sender: TObject);
     function ExtractPoseFile(const FilePath: string; out PoseData,
       PoseName: string): Boolean;
@@ -57,18 +57,17 @@ type
     procedure LoadLastModel;
     procedure LoadPlaceholderModel;
     procedure LoadModel(const FilePath: string; SaveAsLast: Boolean);
+    procedure LoadPoseFile(const FilePath: string);
     procedure LoadPresentation(const PresentationText: string);
     procedure OpenModelClick(Sender: TObject);
-    procedure OpenPoseClick(Sender: TObject);
-    procedure SavePoseClick(Sender: TObject);
+    procedure PoseListClick(Sender: TObject);
+    procedure RefreshPoseList(SelectNewest: Boolean;
+      const SelectedFile: string = '');
     procedure SaveSettings;
-    function GetPoseDirectory: string;
-    function MakeSafeFileName(const Value: string): string;
-    function NewPoseFilePath(const PoseName: string): string;
     procedure SetStatus(const Text: string; Error: Boolean = False);
     procedure WmPresentPose(var Message: TMessage); message WM_MMD_AI_PRESENT_POSE;
   protected
-    procedure DoClose(var Action: TCloseAction); override;
+    procedure DoShow; override;
   public
     constructor Create(AOwner: TComponent); override;
     destructor Destroy; override;
@@ -90,6 +89,7 @@ uses
   Vcl.Graphics,
   MmdAiDiagnosticOverlay,
   MmdAiPlaceholderModel,
+  MmdAiPoseRepository,
   PmxPoseCodec,
   PmxReader;
 
@@ -137,6 +137,7 @@ var
 begin
   inherited CreateNew(AOwner);
   Caption := 'MMD AI Preview';
+  ShowInTaskBar := True;
   Position := poScreenCenter;
   Width := 1100;
   Height := 760;
@@ -156,19 +157,6 @@ begin
   FOpenModelButton.SetBounds(12, 10, 100, 32);
   FOpenModelButton.OnClick := OpenModelClick;
 
-  FOpenPoseButton := TButton.Create(Self);
-  FOpenPoseButton.Parent := ToolPanel;
-  FOpenPoseButton.Caption := 'ポーズを開く';
-  FOpenPoseButton.SetBounds(120, 10, 110, 32);
-  FOpenPoseButton.OnClick := OpenPoseClick;
-
-  FSavePoseButton := TButton.Create(Self);
-  FSavePoseButton.Parent := ToolPanel;
-  FSavePoseButton.Caption := '保存';
-  FSavePoseButton.Enabled := False;
-  FSavePoseButton.SetBounds(238, 10, 76, 32);
-  FSavePoseButton.OnClick := SavePoseClick;
-
   FDisplayCombo := TComboBox.Create(Self);
   FDisplayCombo.Parent := ToolPanel;
   FDisplayCombo.Style := csDropDownList;
@@ -176,13 +164,13 @@ begin
   FDisplayCombo.Items.Add('ボーンのみ');
   FDisplayCombo.Items.Add('通常＋ボーン');
   FDisplayCombo.ItemIndex := 0;
-  FDisplayCombo.SetBounds(326, 12, 140, 28);
+  FDisplayCombo.SetBounds(120, 12, 140, 28);
   FDisplayCombo.OnChange := DisplayModeChanged;
 
   FCandidateLabel := TLabel.Create(Self);
   FCandidateLabel.Parent := ToolPanel;
   FCandidateLabel.Caption := '候補: 未受信';
-  FCandidateLabel.SetBounds(484, 17, 570, 24);
+  FCandidateLabel.SetBounds(278, 17, 776, 24);
 
   LeftPanel := TPanel.Create(Self);
   LeftPanel.Parent := Self;
@@ -190,10 +178,10 @@ begin
   LeftPanel.Width := 220;
   LeftPanel.BevelOuter := bvNone;
 
-  FBoneList := TListBox.Create(Self);
-  FBoneList.Parent := LeftPanel;
-  FBoneList.Align := alClient;
-  FBoneList.OnClick := BoneListClick;
+  FPoseList := TListBox.Create(Self);
+  FPoseList.Parent := LeftPanel;
+  FPoseList.Align := alClient;
+  FPoseList.OnClick := PoseListClick;
 
   FStatusLabel := TLabel.Create(Self);
   FStatusLabel.Parent := LeftPanel;
@@ -201,7 +189,7 @@ begin
   FStatusLabel.AutoSize := False;
   FStatusLabel.Height := 62;
   FStatusLabel.WordWrap := True;
-  FStatusLabel.Caption := 'PMXまたはポーズを開いてください。';
+  FStatusLabel.Caption := '保存ポーズを読み込んでいます。';
 
   FViewport := TMmdAiPreviewViewport.Create(Self);
   FViewport.Parent := Self;
@@ -210,26 +198,35 @@ begin
   FViewport.ShowHint := True;
   FViewport.Hint := '右ドラッグ: 回転 / 空白左ドラッグ: 移動 / ホイール: 拡大縮小 / A・S・D: 固定視点';
 
-  RegisterMmdAiPresentationWindow(Handle);
   FPipeServer := TMmdAiPreviewPipeServer.Create;
-  FPipeServer.Start;
   LoadPlaceholderModel;
   LoadLastModel;
+  RefreshPoseList(True);
 end;
 
 destructor TMmdAiPreviewMainForm.Destroy;
 begin
-  UnregisterMmdAiPresentationWindow(Handle);
+  if FRuntimeStarted then
+    UnregisterMmdAiPresentationWindow(Handle);
   FPipeServer.Free;
   FViewport.SetPreviewScene(nil, nil, -1);
   FPlaceholderModel.Free;
   inherited Destroy;
 end;
 
-procedure TMmdAiPreviewMainForm.DoClose(var Action: TCloseAction);
+procedure TMmdAiPreviewMainForm.DoShow;
 begin
-  Application.Terminate;
-  inherited DoClose(Action);
+  inherited DoShow;
+  if FRuntimeStarted then
+    Exit;
+  RegisterMmdAiPresentationWindow(Handle);
+  try
+    FPipeServer.Start;
+    FRuntimeStarted := True;
+  except
+    UnregisterMmdAiPresentationWindow(Handle);
+    raise;
+  end;
 end;
 
 procedure TMmdAiPreviewMainForm.SetStatus(const Text: string; Error: Boolean);
@@ -270,48 +267,6 @@ begin
   end;
 end;
 
-function TMmdAiPreviewMainForm.GetPoseDirectory: string;
-begin
-  Result := TPath.Combine(ExtractFilePath(ParamStr(0)), 'Poses');
-end;
-
-function TMmdAiPreviewMainForm.MakeSafeFileName(const Value: string): string;
-var
-  C: Char;
-  InvalidChars: TArray<Char>;
-begin
-  Result := Trim(Value);
-  InvalidChars := TPath.GetInvalidFileNameChars;
-  for C in InvalidChars do
-    Result := Result.Replace(C, '_');
-  while (Result <> '') and CharInSet(Result[Length(Result)], [' ', '.']) do
-    Delete(Result, Length(Result), 1);
-  if Result = '' then
-    Result := 'pose';
-  if SameText(Result, 'CON') or SameText(Result, 'PRN') or
-     SameText(Result, 'AUX') or SameText(Result, 'NUL') or
-     SameText(Copy(Result, 1, 3), 'COM') or
-     SameText(Copy(Result, 1, 3), 'LPT') then
-    Result := '_' + Result;
-end;
-
-function TMmdAiPreviewMainForm.NewPoseFilePath(
-  const PoseName: string): string;
-var
-  BaseName: string;
-  Number: Integer;
-begin
-  BaseName := MakeSafeFileName(PoseName);
-  Result := TPath.Combine(GetPoseDirectory, BaseName + '.json');
-  Number := 2;
-  while TFile.Exists(Result) do
-  begin
-    Result := TPath.Combine(GetPoseDirectory,
-      Format('%s-%d.json', [BaseName, Number]));
-    Inc(Number);
-  end;
-end;
-
 procedure TMmdAiPreviewMainForm.LoadLastModel;
 var
   FilePath, SettingsText: string;
@@ -340,8 +295,6 @@ begin
 end;
 
 procedure TMmdAiPreviewMainForm.LoadPlaceholderModel;
-var
-  BoneIndex: Integer;
 begin
   if FPlaceholderModel = nil then
     FPlaceholderModel := CreateMmdPlaceholderModel;
@@ -350,26 +303,14 @@ begin
   InitializeBonePoses(FModel, FPoses);
   if FCurrentPoseData <> '' then
     ApplyPoseData(FCurrentPoseData);
-  FBoneList.Items.BeginUpdate;
-  try
-    FBoneList.Clear;
-    for BoneIndex := 0 to High(FModel.Bones) do
-      FBoneList.Items.Add(FModel.Bones[BoneIndex].Name);
-    if FBoneList.Count > 0 then
-      FBoneList.ItemIndex := 0;
-  finally
-    FBoneList.Items.EndUpdate;
-  end;
   FDisplayCombo.ItemIndex := 1;
-  FViewport.SetPreviewScene(FModel, FPoses, FBoneList.ItemIndex);
+  FViewport.SetPreviewScene(FModel, FPoses, -1);
   ApplyDisplayMode;
   SetStatus('PMX未指定: 標準仮骨格で表示しています。');
 end;
 
 procedure TMmdAiPreviewMainForm.LoadModel(const FilePath: string;
   SaveAsLast: Boolean);
-var
-  BoneIndex: Integer;
 begin
   if not TFile.Exists(FilePath) then
     raise EFileNotFoundException.Create('PMXファイルが見つかりません。');
@@ -378,17 +319,7 @@ begin
   InitializeBonePoses(FModel, FPoses);
   if FCurrentPoseData <> '' then
     ApplyPoseData(FCurrentPoseData);
-  FBoneList.Items.BeginUpdate;
-  try
-    FBoneList.Clear;
-    for BoneIndex := 0 to High(FModel.Bones) do
-      FBoneList.Items.Add(FModel.Bones[BoneIndex].Name);
-    if FBoneList.Count > 0 then
-      FBoneList.ItemIndex := 0;
-  finally
-    FBoneList.Items.EndUpdate;
-  end;
-  FViewport.SetPreviewScene(FModel, FPoses, FBoneList.ItemIndex);
+  FViewport.SetPreviewScene(FModel, FPoses, -1);
   ApplyDisplayMode;
   if SaveAsLast then
     SaveSettings;
@@ -428,11 +359,83 @@ begin
   ApplyDisplayMode;
 end;
 
-procedure TMmdAiPreviewMainForm.BoneListClick(Sender: TObject);
+procedure TMmdAiPreviewMainForm.LoadPoseFile(const FilePath: string);
+var
+  PoseData, PoseName: string;
 begin
-  if FModel <> nil then
-    FViewport.SetPreviewScene(FModel, FPoses, FBoneList.ItemIndex);
+  if not ExtractPoseFile(FilePath, PoseData, PoseName) then
+    raise EArgumentException.Create('ポーズデータが空です。');
+  ApplyPoseData(PoseData);
+  FCurrentPoseName := PoseName;
+  FCurrentCandidateId := '';
+  FCandidateLabel.Caption := '候補: ' + PoseName;
+  FViewport.SetPreviewScene(FModel, FPoses, -1);
   ApplyDisplayMode;
+  SetStatus('ポーズを選択しました: ' + ExtractFileName(FilePath));
+end;
+
+procedure TMmdAiPreviewMainForm.PoseListClick(Sender: TObject);
+begin
+  if FLoadingPoseList or (FPoseList.ItemIndex < 0) or
+     (FPoseList.ItemIndex >= Length(FPoseFiles)) then
+    Exit;
+  try
+    LoadPoseFile(FPoseFiles[FPoseList.ItemIndex]);
+  except
+    on E: Exception do
+      SetStatus('ポーズ読込みエラー: ' + E.Message, True);
+  end;
+end;
+
+procedure TMmdAiPreviewMainForm.RefreshPoseList(SelectNewest: Boolean;
+  const SelectedFile: string);
+var
+  I, J, SelectedIndex: Integer;
+  Files: TArray<string>;
+  Temp: string;
+begin
+  TDirectory.CreateDirectory(GetMmdAiPoseDirectory);
+  Files := TDirectory.GetFiles(GetMmdAiPoseDirectory, '*.json');
+  for I := 0 to High(Files) - 1 do
+    for J := I + 1 to High(Files) do
+      if TFile.GetLastWriteTimeUtc(Files[J]) >
+         TFile.GetLastWriteTimeUtc(Files[I]) then
+      begin
+        Temp := Files[I];
+        Files[I] := Files[J];
+        Files[J] := Temp;
+      end;
+  FPoseFiles := Files;
+  SelectedIndex := -1;
+  FLoadingPoseList := True;
+  FPoseList.Items.BeginUpdate;
+  try
+    FPoseList.Clear;
+    for I := 0 to High(FPoseFiles) do
+    begin
+      FPoseList.Items.Add(ExtractFileName(FPoseFiles[I]));
+      if (SelectedFile <> '') and
+         SameText(TPath.GetFullPath(FPoseFiles[I]),
+           TPath.GetFullPath(SelectedFile)) then
+        SelectedIndex := I;
+    end;
+    if (SelectedIndex < 0) and SelectNewest and
+       (Length(FPoseFiles) > 0) then
+      SelectedIndex := 0;
+    FPoseList.ItemIndex := SelectedIndex;
+  finally
+    FPoseList.Items.EndUpdate;
+    FLoadingPoseList := False;
+  end;
+  if SelectedIndex >= 0 then
+  begin
+    try
+      LoadPoseFile(FPoseFiles[SelectedIndex]);
+    except
+      on E: Exception do
+        SetStatus('最新ポーズ読込みエラー: ' + E.Message, True);
+    end;
+  end;
 end;
 
 procedure TMmdAiPreviewMainForm.OpenModelClick(Sender: TObject);
@@ -481,88 +484,10 @@ begin
   Result := PoseData <> '';
 end;
 
-procedure TMmdAiPreviewMainForm.OpenPoseClick(Sender: TObject);
-var
-  Dialog: TOpenDialog;
-  PoseData, PoseName: string;
-begin
-  Dialog := TOpenDialog.Create(Self);
-  try
-    Dialog.Filter := 'MMDポーズ JSON (*.json)|*.json|すべてのファイル (*.*)|*.*';
-    if not Dialog.Execute then
-      Exit;
-    try
-      if not ExtractPoseFile(Dialog.FileName, PoseData, PoseName) then
-        raise EArgumentException.Create('ポーズデータが空です。');
-      ApplyPoseData(PoseData);
-      FCurrentPoseName := PoseName;
-      FCurrentCandidateId := '';
-      FCandidateLabel.Caption := '候補: ' + PoseName;
-      FSavePoseButton.Enabled := True;
-      if FModel <> nil then
-      begin
-        FViewport.SetPreviewScene(FModel, FPoses, FBoneList.ItemIndex);
-        ApplyDisplayMode;
-        SetStatus('ポーズを読み込みました: ' + PoseName);
-      end;
-    except
-      on E: Exception do
-        SetStatus('ポーズ読込みエラー: ' + E.Message, True);
-    end;
-  finally
-    Dialog.Free;
-  end;
-end;
-
-procedure TMmdAiPreviewMainForm.SavePoseClick(Sender: TObject);
-var
-  FilePath, PoseName: string;
-  Root: TJSONObject;
-begin
-  if FCurrentPoseData = '' then
-  begin
-    SetStatus('保存するポーズがありません。', True);
-    Exit;
-  end;
-  PoseName := FCurrentPoseName;
-  if PoseName = '' then
-    PoseName := '新しいポーズ';
-  if not InputQuery('ポーズを保存', '名称:', PoseName) then
-    Exit;
-  PoseName := Trim(PoseName);
-  if PoseName = '' then
-  begin
-    SetStatus('ポーズ名を入力してください。', True);
-    Exit;
-  end;
-  try
-    TDirectory.CreateDirectory(GetPoseDirectory);
-    FilePath := NewPoseFilePath(PoseName);
-    Root := TJSONObject.Create;
-    try
-      Root.AddPair('format', 'mmd-ai-preview-pose');
-      Root.AddPair('version', TJSONNumber.Create(1));
-      Root.AddPair('name', PoseName);
-      if FCurrentCandidateId <> '' then
-        Root.AddPair('candidate_id', FCurrentCandidateId);
-      Root.AddPair('pose_data', FCurrentPoseData);
-      TFile.WriteAllText(FilePath, Root.Format(2), TEncoding.UTF8);
-    finally
-      Root.Free;
-    end;
-    FCurrentPoseName := PoseName;
-    FCandidateLabel.Caption := '候補: ' + PoseName;
-    SetStatus('保存しました: ' + FilePath);
-  except
-    on E: Exception do
-      SetStatus('ポーズ保存エラー: ' + E.Message, True);
-  end;
-end;
-
 procedure TMmdAiPreviewMainForm.LoadPresentation(
   const PresentationText: string);
 var
-  ModelFile, PoseData: string;
+  ModelFile, PoseData, PoseFile: string;
   RootValue: TJSONValue;
 begin
   RootValue := TJSONObject.ParseJSONValue(PresentationText);
@@ -571,6 +496,7 @@ begin
       raise EArgumentException.Create('提示データがJSON objectではありません。');
     ModelFile := ReadJsonString(TJSONObject(RootValue), 'model_file', '');
     PoseData := ReadJsonString(TJSONObject(RootValue), 'pose_data', '');
+    PoseFile := ReadJsonString(TJSONObject(RootValue), 'pose_file', '');
     if PoseData = '' then
       raise EArgumentException.Create('pose_dataがありません。');
     FCurrentPoseData := PoseData;
@@ -580,16 +506,17 @@ begin
     else
     begin
       ApplyPoseData(PoseData);
-      FViewport.SetPreviewScene(FModel, FPoses, FBoneList.ItemIndex);
+      FViewport.SetPreviewScene(FModel, FPoses, -1);
       ApplyDisplayMode;
     end;
+    RefreshPoseList(False, PoseFile);
     FCurrentCandidateId := ReadJsonString(TJSONObject(RootValue),
       'candidate_id', '');
     FCurrentPoseName := ReadJsonString(TJSONObject(RootValue), 'pose_name',
       '新しいポーズ');
     FCandidateLabel.Caption := '候補: ' + FCurrentPoseName;
-    FSavePoseButton.Enabled := True;
-    SetStatus('Codexから候補を受信しました。3D表示を確認してください。');
+    SetStatus('AIが作成した最新ポーズを表示しています: ' +
+      ExtractFileName(PoseFile));
   finally
     RootValue.Free;
   end;

@@ -24,6 +24,7 @@ uses
   System.SyncObjs,
   System.SysUtils,
   MmdAiPlaceholderModel,
+  MmdAiPoseRepository,
   MmdAiProvider,
   MmdAiProviderClient,
   PmxModel,
@@ -228,7 +229,7 @@ end;
 function PresentMmdPose(const Request: TJSONObject): string;
 var
   CandidateId, CurrentPose, DirectPoseData, ErrorText, ModelFile, PoseData,
-  PoseName, PreviewText: string;
+  PoseFile, PoseName, PreviewText: string;
   PlaceholderModel: TPmxModel;
   Presentation, ResultRoot: TJSONObject;
   PreviewRoot: TJSONObject;
@@ -271,12 +272,14 @@ begin
       if PoseData = '' then
         Exit(ErrorJson('missing_pose_data',
           'MMD provider did not return pose_data.'));
+      PoseFile := SaveMmdAiPoseFile(PoseName, CandidateId, PoseData);
       Presentation := TJSONObject.Create;
       try
         Presentation.AddPair('candidate_id', CandidateId);
         Presentation.AddPair('pose_name', PoseName);
         Presentation.AddPair('model_file', ModelFile);
         Presentation.AddPair('pose_data', PoseData);
+        Presentation.AddPair('pose_file', PoseFile);
         if not QueuePresentation(Presentation.ToJSON, ErrorText) then
           Exit(ErrorJson('preview_ui_unavailable', ErrorText));
       finally
@@ -290,6 +293,7 @@ begin
         ResultRoot.AddPair('candidate_id', CandidateId);
         ResultRoot.AddPair('pose_name', PoseName);
         ResultRoot.AddPair('pose_data', PoseData);
+        ResultRoot.AddPair('pose_file', PoseFile);
         ResultRoot.AddPair('preview', CloneJson(PreviewRoot));
         Result := ResultRoot.ToJSON;
       finally

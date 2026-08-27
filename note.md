@@ -12,7 +12,7 @@ CodexからMMDへ直接ポーズ候補を渡し、AviUtl2を起動せずにモ�
 
 - `MMDAIPreview`: Codexとの直接通信、モデルセッション、診断用カメラ、画像キャプチャを担当する。
 - `MMD`: PMX、ボーン、IK、姿勢計算、スキニング、描画の正本を担当する。
-- `Poses`: 人間が確認して確定した、Git同期可能なJSONポーズを保存する。
+- `Poses`: Codexが生成し、人間が3D確認できるGit同期可能なJSONポーズを保存する。
 
 処理経路は`Codex -> Named Pipe -> MMDAIPreview -> MMD共通コア`とし、Codexの画像評価が完了した候補だけをGUIへ提示する。
 
@@ -61,10 +61,13 @@ CodexからMMDへ直接ポーズ候補を渡し、AviUtl2を起動せずにモ�
 - Named Pipeから同一接続で能力照会、実モデル「万歳」の14ボーン正規化、不正JSONの拒否、約200 KiB要求を連続処理し、切断直後の再接続にも成功した。Aul2MIRAI、AviUtl2、選択状態、Undoには依存しない。
 - 4 MiBを超えるNDJSON要求は改行まで安全に破棄して`request_too_large`を返し、同じ接続の次要求と切断後の再接続を継続できることを確認した。
 - 引数なし起動でVCLの3D確認画面を開く。GUIと同時にNamed Pipeサーバーを起動し、`present_pose`で受けた完成候補を読み取り専用のPMXプレビューへ表示する。
-- GUIはPMXと保存済みJSONポーズを個別に開ける。最後に開いたPMXの絶対パスを`%LOCALAPPDATA%\MMDAIPreview\settings.json`へ記録し、次回起動時に再読込みする。
+- GUIはPMXを個別に開ける。最後に開いたPMXの絶対パスを`%LOCALAPPDATA%\MMDAIPreview\settings.json`へ記録し、次回起動時に再読込みする。
 - 表示は「通常」「ボーンのみ」「通常＋ボーン」を切り替えられる。ボーンはキャラクター基準の左を青、右を赤、中央を黄で描き、指を含む全ボーンの位置関係を人間とCodexで共有しやすくした。
-- GUIの「保存」は候補名を初期値として名称入力を行い、プロジェクト直下の`Poses`へJSON保存する。同名時は`-2`、`-3`を付け、既存ファイルを上書きしない。PMX絶対パスは保存データへ含めず、Git同期可能にした。
-- 実モデル「ふらすこ式風きりたん」と万歳候補をNamed Pipeの`present_pose`で提示し、通常、ボーンのみ、通常＋ボーンの3表示を実画面で確認した。保存を2回実行して連番化と同一`pose_data`も確認した。
+- GUIの「ポーズを開く」と「保存」を廃止し、左側へプロジェクト直下の`Poses`にあるJSONファイル名を更新日時の新しい順で表示する。選択すると直ちにプレビューへ反映し、起動時は最新ファイルを自動選択する。
+- `present_pose`は正規化済みポーズを`Poses`へJSON保存してからGUIへ提示し、応答の`pose_file`へ作成先を返す。同名時は`-2`、`-3`を付け、既存ファイルを上書きしない。PMX絶対パスは保存データへ含めない。
+- 実モデル「ふらすこ式風きりたん」と万歳候補をNamed Pipeの`present_pose`で提示し、通常、ボーンのみ、通常＋ボーンの3表示を実画面で確認した。旧GUI保存では連番化と同一`pose_data`を確認済みで、現在は同じ上書き防止処理を`present_pose`時の自動保存へ移した。
+- 新しい一覧方式で「右手を上げた挨拶」をNamed Pipeから提示し、JSONの先行作成、一覧先頭への追加・選択、アプリ再起動後の最新JSON自動選択を確認した。
+- DFMなしの`CreateNew`ではVCLのメインフォーム生成フラグが設定されないため、フォーム自身の`ShowInTaskBar`を明示した。Named Pipe起動も初回表示時へ移して早期`Handle`生成を避け、所有者なしの`WS_EX_APPWINDOW`として通常アプリと同様にタスクバーから前面復帰・終了できるようにした。
 - MMDAIPreviewのDebug / Release、および共有レンダラー変更後のMMD Model / Pose両プラグインのDebug / Releaseをすべて警告0・エラー0でビルドした。
 - Delphi IDEのF9実行で外部ホストを要求しないよう、プロジェクト種別を`FrameworkType=VCL`、`AppType=Application`、`Borland.ProjectType=VCLApplication`へ変更し、Win64、Debug / Release構成、`UseLauncher=False`をIDE用メタデータへ明示した。引数なしではGUIを直接起動し、引数付きのCLIモードだけ既存コンソールへ接続する。GUI起動と`--self-test`の双方を確認済みである。
 - IDE実行構成は`D:\DelphiProg\test\WRT2646\Client\WRT2646MonitorControlTest`を正本として組み直した。DPRが`Vcl.Forms`からメインフォームを直接生成し、フォーム型をinterfaceへ公開する。EXEはVCLプロジェクト標準どおりプロジェクト直下の`D:\DelphiProg\test\MMDAIPreview\MMDAIPreview.exe`へ出力し、DPROJへWin64構成とProjectOutputのDeployment情報を明示した。

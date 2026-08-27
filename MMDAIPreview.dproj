@@ -100,6 +100,7 @@
             <Form>MainForm</Form>
         </DCCReference>
         <DCCReference Include="Source\MmdAiPlaceholderModel.pas"/>
+        <DCCReference Include="Source\MmdAiPoseRepository.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>
