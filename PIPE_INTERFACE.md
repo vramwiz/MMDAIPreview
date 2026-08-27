@@ -9,10 +9,10 @@
 - 最大要求サイズ: 4 MiB
 - 接続中は複数要求を連続送信でき、切断後は新しいクライアントを待ち受ける。
 
-サーバーは次のコマンドで単独起動する。
+GUIを通常起動するとサーバーも自動起動する。画面を使わずサーバーだけを起動する場合は次のコマンドを使う。
 
 ```powershell
-D:\DelphiProg\test\MMDAIPreview\Win64\Debug\MMDAIPreview.exe --pipe
+D:\DelphiProg\test\MMDAIPreview\MMDAIPreview.exe --pipe
 ```
 
 ## 要求と応答
@@ -24,6 +24,42 @@ Pipeは既存のMMDAIPreview JSON操作をそのまま受ける。`request_id`�
 ```
 
 中心となるボーン操作は`get_model_schema`と`preview_pose`である。姿勢形式はMMD共通の`mmd.pose`バージョン1を使用し、Pipe独自形式は作らない。`preview_pose`成功時は正規化済み`pose_data`と解決済みボーン情報を返す。
+
+## 3D確認画面への提示
+
+Codex側で画像評価と調整を終えた候補は`present_pose`でGUIへ提示する。GUI版の`MMDAIPreview.exe`が起動している必要がある。
+
+```json
+{
+  "request_id": "present-1",
+  "operation": "present_pose",
+  "candidate_id": "optional-candidate-id",
+  "pose_name": "万歳",
+  "model_file": "D:\\Models\\character.pmx",
+  "current_pose": "",
+  "payload": {
+    "mode": "replace",
+    "bones": [
+      {"name": "左腕", "rotation_euler_degrees": [0, 8, 75]},
+      {"name": "右腕", "rotation_euler_degrees": [0, -8, -75]}
+    ]
+  }
+}
+```
+
+`present_pose`は先にMMD共通プロバイダーで正規化とボーン解決を行い、成功した`pose_data`だけを画面へ渡す。`model_file`は任意で、省略時は標準MMDボーン名を持つ仮骨格で検証・表示する。画面では通常、ボーンのみ、通常＋ボーンを切り替えられる。編集操作は行わず、確認後の保存はユーザーが画面の「保存」を押して確定する。
+
+正規化済みの`mmd.pose`バージョン1を再提示する場合は、`payload`の代わりに`pose_data`文字列を直接指定できる。この経路はJSON形式の検証とQuaternion再正規化を行うが、`model_file`があってもモデル固有ボーンの存在確認は行わず、応答の`preview.model_validation`は`false`となる。
+
+```json
+{
+  "operation": "present_pose",
+  "pose_name": "保存済みポーズ",
+  "pose_data": "{\"version\":1,\"bones\":[...]}"
+}
+```
+
+GUIが開いていない場合は`preview_ui_unavailable`、別候補の提示処理中は同じコードと説明文を返す。
 
 ## PowerShell接続例
 

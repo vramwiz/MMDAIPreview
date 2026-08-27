@@ -16,6 +16,10 @@ procedure ClearDiagnosticBitmap(Bitmap: Vcl.Graphics.TBitmap;
 // 最終姿勢の骨格を、モデル本人基準の左青・右赤・中央黄で描く。
 procedure DrawDiagnosticBones(Bitmap: Vcl.Graphics.TBitmap; Model: TPmxModel;
   const Poses: TPmxBonePoses; const Camera: TMmdPreviewCamera);
+// 計算済みシーンの骨格を任意Canvasへ描き、対話Viewportでも同じ凡例を使う。
+procedure DrawDiagnosticBoneScene(Canvas: Vcl.Graphics.TCanvas;
+  Width, Height: Integer; Model: TPmxModel; const Scene: TMmdPreviewScene;
+  const Camera: TMmdPreviewCamera);
 
 implementation
 
@@ -60,34 +64,43 @@ end;
 procedure DrawDiagnosticBones(Bitmap: Vcl.Graphics.TBitmap; Model: TPmxModel;
   const Poses: TPmxBonePoses; const Camera: TMmdPreviewCamera);
 var
-  EndPoint, StartPoint: TPoint;
-  Joint: TMmdPreviewJoint;
-  Radius: Integer;
   Scene: TMmdPreviewScene;
-  Segment: TMmdPreviewBoneSegment;
 begin
   BuildPreviewScene(Model, Poses, nil, EmptyPreviewTarget,
     EmptyPreviewTarget, Scene);
-  Bitmap.Canvas.Pen.Width := Max(2, Min(Bitmap.Width, Bitmap.Height) div 240);
+  DrawDiagnosticBoneScene(Bitmap.Canvas, Bitmap.Width, Bitmap.Height, Model,
+    Scene, Camera);
+end;
+
+procedure DrawDiagnosticBoneScene(Canvas: Vcl.Graphics.TCanvas;
+  Width, Height: Integer; Model: TPmxModel; const Scene: TMmdPreviewScene;
+  const Camera: TMmdPreviewCamera);
+var
+  EndPoint, StartPoint: TPoint;
+  Joint: TMmdPreviewJoint;
+  Radius: Integer;
+  Segment: TMmdPreviewBoneSegment;
+begin
+  Canvas.Pen.Width := Max(2, Min(Width, Height) div 240);
   for Segment in Scene.BoneSegments do
   begin
     StartPoint := ScreenPoint(Segment.StartPosition, Scene.Projection,
-      Camera, Bitmap.Width, Bitmap.Height);
+      Camera, Width, Height);
     EndPoint := ScreenPoint(Segment.EndPosition, Scene.Projection,
-      Camera, Bitmap.Width, Bitmap.Height);
-    Bitmap.Canvas.Pen.Color := BoneColor(Model.Bones[Segment.BoneIndex].Name);
-    Bitmap.Canvas.MoveTo(StartPoint.X, StartPoint.Y);
-    Bitmap.Canvas.LineTo(EndPoint.X, EndPoint.Y);
+      Camera, Width, Height);
+    Canvas.Pen.Color := BoneColor(Model.Bones[Segment.BoneIndex].Name);
+    Canvas.MoveTo(StartPoint.X, StartPoint.Y);
+    Canvas.LineTo(EndPoint.X, EndPoint.Y);
   end;
-  Radius := Max(2, Min(Bitmap.Width, Bitmap.Height) div 300);
-  Bitmap.Canvas.Pen.Width := 1;
+  Radius := Max(2, Min(Width, Height) div 300);
+  Canvas.Pen.Width := 1;
   for Joint in Scene.Joints do
   begin
     EndPoint := ScreenPoint(Joint.Position, Scene.Projection, Camera,
-      Bitmap.Width, Bitmap.Height);
-    Bitmap.Canvas.Brush.Color := BoneColor(Model.Bones[Joint.BoneIndex].Name);
-    Bitmap.Canvas.Pen.Color := Bitmap.Canvas.Brush.Color;
-    Bitmap.Canvas.Ellipse(EndPoint.X - Radius, EndPoint.Y - Radius,
+      Width, Height);
+    Canvas.Brush.Color := BoneColor(Model.Bones[Joint.BoneIndex].Name);
+    Canvas.Pen.Color := Canvas.Brush.Color;
+    Canvas.Ellipse(EndPoint.X - Radius, EndPoint.Y - Radius,
       EndPoint.X + Radius + 1, EndPoint.Y + Radius + 1);
   end;
 end;

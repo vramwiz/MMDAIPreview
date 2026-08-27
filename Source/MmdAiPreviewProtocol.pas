@@ -15,6 +15,7 @@ uses
   MmdAiPreviewCapture,
   MmdAiPreviewBatch,
   MmdAiFingerIdValidation,
+  MmdAiPreviewPresentation,
   MmdAiProviderClient;
 
 function ReadOperation(const Root: TJSONObject): string;
@@ -45,6 +46,7 @@ begin
     Operations.Add('capture_pose');
     Operations.Add('capture_pose_set');
     Operations.Add('validate_finger_id');
+    Operations.Add('present_pose');
     Host.AddPair('operations', Operations);
     Views := TJSONArray.Create;
     Views.Add('front');
@@ -101,6 +103,8 @@ begin
         Exit(CaptureMmdPoseSet(TJSONObject(RootValue)));
       if SameText(Operation, 'validate_finger_id') then
         Exit(ValidateFingerIdImages(TJSONObject(RootValue)));
+      if SameText(Operation, 'present_pose') then
+        Exit(PresentMmdPose(TJSONObject(RootValue)));
       if SameText(Operation, 'get_capabilities') then
         Exit(AddHostCapabilities(InvokeMmdAiProvider(RequestText)));
     end;
